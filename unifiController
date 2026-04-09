@@ -17,6 +17,7 @@ limitations under the License.
 -------------------------------------------
 
 Change history:
+1.0.13 - welasco - Bugfix Auth cookie unifises, csrf_token (Unifi Controller nows require both cookies for Authentication)
 1.0.12 - tomw - Bugfix for UniFi OS 4.0.x
 1.0.11 - tomw - Bugfix for UniFi OS 3.2.x
 1.0.10 - tomw - Support re-using child device (through updating Device MAC setting) if physical device changes
@@ -38,10 +39,10 @@ metadata
     {
         capability "Initialize"
         capability "Refresh"
-        
+
         attribute "commStatus", "string"
         attribute "eventStream", "string"
-        
+
         command "createClientDevice", ["name", "mac"]
     }
 }
@@ -73,7 +74,7 @@ preferences
 
 import groovy.transform.Field
 
-def logDebug(msg) 
+def logDebug(msg)
 {
     if (logEnable) { log.debug(msg) }
 }
@@ -99,52 +100,52 @@ def initialize()
     sendEvent(name: "commStatus", value: "unknown")
     try
     {
-        closeEventSocket()        
-        
-        def isUniFiOS = isUniFiOS()        
+        closeEventSocket()
+
+        def isUniFiOS = isUniFiOS()
         if(null == isUniFiOS)
         {
             def errMsg = "check IP address, port, or connection to controller"
             throw new Exception(errMsg)
         }
-     
-        setUniFiOS(isUniFiOS)        
-        
+
+        setUniFiOS(isUniFiOS)
+
         refreshCookie()
-        
+
         // lag for cookies to stabilize
         runIn(2, refresh)
-        
+
         // run this to populate a full list of known clients
         //runIn(4, queryKnownClients)
         runIn(6, openEventSocket)
-        
+
         // run this to populate a list of currently active clients.  may take several seconds to execute.
         //runIn(10, queryActiveClients)
-        
+
         sendEvent(name: "commStatus", value: "good")
     }
     catch (Exception e)
     {
         logDebug("initialize() failed: ${e.message}")
         sendEvent(name: "commStatus", value: "error")
-        
+
         reinitialize()
     }
 }
 
 def uninstalled()
 {
-    unschedule()    
+    unschedule()
     invalidateCookie()
 }
 
 def refresh()
 {
     unschedule(refresh)
-    
+
     refreshChildren()
-    
+
     // schedule next refresh
     runIn(refreshInterval.toFloat().toInteger(), refresh)
 }
@@ -159,15 +160,15 @@ def refreshChildren()
 
 def writeDeviceMacCmd(mac, cmd, manager = "stamgr", Map addlParams = null)
 {
-    def body = [mac: mac, cmd: cmd]    
+    def body = [mac: mac, cmd: cmd]
     // addlParams, if present, is like [port_idx: 8]
     if(addlParams) { body += addlParams }
-    
+
     body = groovy.json.JsonOutput.toJson(body)
-    
-    logDebug("writeDeviceMacCmd(mac: ${mac}, body: ${body}, manager: ${manager})")    
+
+    logDebug("writeDeviceMacCmd(mac: ${mac}, body: ${body}, manager: ${manager})")
     def params = genParamsMain("cmd/${manager}", body)
-    
+
     return httpExecWithAuthCheck("POST", params)
 }
 
@@ -181,26 +182,26 @@ void parse(String message)
     try
     {
         def msgJson = new groovy.json.JsonSlurper().parseText(message)
-        
+
         if(msgJson?.meta?.message == "events")
         {
             // log all events (if enabled)
             logEvent(message)
         }
-        
+
         for(thisMsg in msgJson?.data)
         {
             // connected/disconnected events, for client presence status
             if(thisMsg.key in allConnectionEvents)
             {
                 //logDebug("connection observed!")
-                
+
                 if(!(thisMsg.user || thisMsg.guest))
                 {
                     // not sure why happened, but we don't have the data we need
                     continue
                 }
-                
+
                 child = findChildDevice(thisMsg.user ?: thisMsg.guest)
                 if(child)
                 {
@@ -222,19 +223,19 @@ void parse(String message)
 def webSocketStatus(String message)
 {
     logDebug("webSocketStatus: ${message}")
-    
+
     // thanks for the idea: https://community.hubitat.com/t/websocket-client/11843/15
     if(message.startsWith("status: open"))
-    {        
+    {
         sendEvent(name: "commStatus", value: "good")
-        
+
         state.reconnectDelay = 1
         setWasExpectedClose(false)
     }
     else if(message.startsWith("status: closing"))
     {
         sendEvent(name: "commStatus", value: "no events")
-        
+
         if(getWasExpectedClose())
         {
             setWasExpectedClose(false)
@@ -244,8 +245,8 @@ def webSocketStatus(String message)
     }
     else if(message.startsWith("failure:"))
     {
-        sendEvent(name: "commStatus", value: "error")        
-        
+        sendEvent(name: "commStatus", value: "error")
+
         reinitialize()
     }
 }
@@ -253,12 +254,12 @@ def webSocketStatus(String message)
 def reinitialize()
 {
     // thanks @ogiewon for the example
-    
+
     // first delay is 2 seconds, doubles every time
-    def delayCalc = (state.reconnectDelay ?: 1) * 2    
+    def delayCalc = (state.reconnectDelay ?: 1) * 2
     // upper limit is 600s
     def reconnectDelay = delayCalc <= 600 ? delayCalc : 600
-    
+
     state.reconnectDelay = reconnectDelay
     runIn(reconnectDelay, initialize)
 }
@@ -276,7 +277,7 @@ def closeEventSocket()
         setWasExpectedClose(true)
         // wait for state to catch up
         pauseExecution(500)
-        
+
         interfaces.webSocket.close()
     }
     catch (Exception e)
@@ -289,7 +290,7 @@ def refreshCookie()
 {
     try
     {
-        login()        
+        login()
         sendEvent(name: "commStatus", value: "good")
     }
     catch (Exception e)
@@ -302,20 +303,20 @@ def refreshCookie()
 
 def invalidateCookie()
 {
-    logout() 
+    logout()
     sendEvent(name: "commStatus", value: "unknown")
 }
 
 def isUniFiOS()
 {
     def isUniFiOS
-    
+
     try
     {
-        // check for non-UniFi OS        
+        // check for non-UniFi OS
         httpPost([uri: "https://${controllerIP}:${(customPort ? customPortNum : 8443)}", ignoreSSLIssues: true])
         { resp -> if(resp.getStatus().toInteger() == 302) { isUniFiOS = false } }
-        
+
         // return now because we are done
         return isUniFiOS
     }
@@ -324,14 +325,14 @@ def isUniFiOS()
         //logDebug("isUniFiOS() check #1 failed: ${e.toString()}")
         // failed, but we don't know why (yet)
     }
-    
+
     try
     {
         // check for UniFi OS by hitting an endpoint that should exist
         def uri = "https://${controllerIP}:${(customPort ? customPortNum : 443)}/proxy/network/api/s/default/self"
         httpPost([uri: uri, ignoreSSLIssues: true])
         { resp -> if(resp.getStatus().toInteger() == 200) { isUniFiOS = true } }
-        
+
         // ok to fall through
     }
     catch(groovyx.net.http.HttpResponseException e)
@@ -345,7 +346,7 @@ def isUniFiOS()
         //logDebug("isUniFiOS() check #2 failed: ${e.toString()}")
         // failed again, and we have no idea why
     }
-    
+
     return isUniFiOS
 }
 
@@ -353,7 +354,7 @@ def genParamsAuth(operation)
 {
     def body = [username: username, password: password, strict: true]
     body = groovy.json.JsonOutput.toJson(body)
-    
+
     def params =
         [
             uri: getBaseURI() + (operation == "login" ? getLoginSuffix() : getLogoutSuffix()),
@@ -361,11 +362,11 @@ def genParamsAuth(operation)
             [
                 'Content-Type': "application/json",
             ],
-            
+
             body: body,
             ignoreSSLIssues: true,
         ]
- 
+
     return params
 }
 
@@ -395,12 +396,12 @@ def genParamsMain(suffix, body = null)
             ],
             ignoreSSLIssues: true,
         ]
-    
+
     if(body)
     {
         params['body'] = body
     }
- 
+
     return params
 }
 
@@ -411,7 +412,7 @@ def genHeadersWss()
             (cookieNameToSend()): "${getCookie()}",
             'User-Agent': "UniFi Events"
         ]
-    
+
     return headers
 }
 
@@ -447,37 +448,37 @@ def login()
     try
     {
         def resp = httpExec("POST", genParamsAuth("login"))
-        
+
         def cookie
         def csrf
         resp?.getHeaders()?.each
         {
             //logDebug("header: ${it.getName()} == ${it.getValue()}")
-            
+
             if(isCookieHeaderName(it.getName()?.toString()))
             {
                 cookie = it.getValue()?.split(';')?.getAt(0)
+                setCookie(cookie)
             }
             else if(isCsrfTokenName(it.getName()?.toString()))
             {
                 // this is probably a controller on UniFi OS
                 csrf = it.value
-            }            
+            }
             else if(it.value?.split('=')?.getAt(0)?.toString() == "csrf_token")
             {
                 // this is probably a controller NOT on UniFi OS
                 csrf = it.value.split(';')?.getAt(0)?.split('=')?.getAt(1)
             }
         }
-        
-        setCookie(cookie)
+        //setCookie(cookie)
         setCsrf(csrf)
     }
     catch(groovyx.net.http.HttpResponseException e)
     {
         logDebug("login() failed: ${e.message}")
         throw(e)
-    }    
+    }
 }
 
 def logout()
@@ -505,12 +506,12 @@ def runQuery(suffix, throwToCaller = false)
         if(!throwToCaller)
         {
             logDebug(e)
-            
+
             // if the caller isn't handling this, set the commStatus here
             sendEvent(name: "commStatus", value: "error")
             return
         }
-        
+
         throw e
     }
 }
@@ -520,7 +521,7 @@ def queryActiveClients()
     def resp = runQuery("stat/sta")
     def currentMacList = []
     resp?.data?.data?.collect {thisClient -> currentMacList.add(thisClient.mac)}
-    
+
     state.currentMacList = currentMacList
 }
 
@@ -529,7 +530,7 @@ def queryKnownClients()
     def resp = runQuery("rest/user")
     def knownMacList = []
     resp?.data?.data?.collect {thisClient -> knownMacList.add(thisClient.mac)}
-    
+
     state.knownMacList = knownMacList
 }
 
@@ -587,18 +588,37 @@ def createClientDevice(name, mac)
 def refreshFromChild(mac)
 {
     def resp = queryClientByMac(mac)
-    
-    def states = 
+
+    def states =
         [
             presence: (resp ? "present" : "not present"),
             ap: (resp ? resp?.data[0]?.ap_mac : "unknown"),
             switch: (false == resp?.data?.getAt(0)?.blocked) ? "on" : null
         ]
-    
+
     findChildDevice(mac)?.refreshFromParent(states)
 }
 
-def setCookie(cookie) { state.cookie = cookie }
+//def setCookie(cookie) { state.cookie = cookie }
+def setCookie(newCookie) {
+    if (!newCookie) return
+
+    // Extract the cookie name (part before the '=')
+    def newCookieName = newCookie?.split('=')[0]?.trim()
+
+    // Get existing cookies and split by ';'
+    def existing = state.cookie ?: ""
+    def cookieList = existing ? existing.split(';').collect { it.trim() } : []
+
+    // Remove any existing cookie with the same name
+    cookieList = cookieList.findAll { !it.startsWith("${newCookieName}=") }
+
+    // Add the new cookie
+    cookieList.add(newCookie)
+
+    // Join back with '; ' separator
+    state.cookie = cookieList.join('; ')
+}
 
 def getCookie() { return state.cookie }
 
@@ -615,19 +635,19 @@ def setWasExpectedClose(wasExpected) { state.wasExpectedClose = wasExpected }
 def getWasExpectedClose() { return state.wasExpectedClose }
 
 def httpExec(operation, params)
-{    
+{
     def result = null
-    
+
     logDebug("httpExec(${operation}, ${params})")
-    
-    def httpClosure = 
+
+    def httpClosure =
     { resp ->
         result = resp
         //logDebug("result.data = ${result.data}")
     }
-    
+
     def httpOp
-    
+
     switch(operation)
     {
         case "POST":
@@ -637,7 +657,7 @@ def httpExec(operation, params)
             httpOp = this.delegate.&httpGet
             break
     }
-    
+
     httpOp(params, httpClosure)
     return result
 }
@@ -658,18 +678,18 @@ def httpExecWithAuthCheck(operation, params, throwToCaller = false)
             try
             {
                 logDebug("httpExecWithAuthCheck() auth failed.  retrying...")
-                refreshCookie()                
-                
+                refreshCookie()
+
                 // update with new Auth token
                 params['headers'][cookieNameToSend()] = getCookie()
                 params['headers'][csrfTokenNameToSend()] = getCsrf()
-                
+
                 // workaround for bug?
                 if(null == params['ignoreSSLIssues'])
                 {
                     params['ignoreSSLIssues']= true
                 }
-                
+
                 res = httpExec(operation, params)
                 return res
             }
@@ -688,7 +708,7 @@ def httpExecWithAuthCheck(operation, params, throwToCaller = false)
     {
         logDebug("httpExecWithAuthCheck() unknown error: ${e}")
         sendEvent(name: "commStatus", value: "error")
-        
+
         if(throwToCaller) { throw(e) }
     }
 }
